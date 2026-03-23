@@ -3,12 +3,16 @@ package routes
 import (
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/handlers"
+	"stellarbill-backend/internal/idempotency"
 )
 
 func Register(r *gin.Engine) {
 	r.Use(corsMiddleware())
 
+	store := idempotency.NewStore(idempotency.DefaultTTL)
+
 	api := r.Group("/api")
+	api.Use(idempotency.Middleware(store))
 	{
 		api.GET("/health", handlers.Health)
 		api.GET("/subscriptions", handlers.ListSubscriptions)
