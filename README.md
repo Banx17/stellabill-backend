@@ -110,6 +110,8 @@ In production, set these via your host’s environment or secrets manager; do no
 
 Base URL (local): `http://localhost:8080`
 
+OpenAPI contract: `openapi/openapi.yaml` (see `docs/openapi.md`).
+
 | Method | Path                     | Description              |
 |--------|--------------------------|--------------------------|
 | GET    | `/api/health`            | Health check             |
