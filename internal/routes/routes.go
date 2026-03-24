@@ -15,6 +15,8 @@ func Register(r *gin.Engine) {
 	api := r.Group("/api")
 	{
 		api.GET("/health", handlers.Health)
+		api.GET("/outbox/stats", handlers.OutboxStats)
+		api.POST("/outbox/test", handlers.PublishTestEvent)
 		api.GET("/subscriptions", handlers.ListSubscriptions)
 		api.GET("/subscriptions/:id", handlers.GetSubscription)
 		api.GET("/plans", handlers.ListPlans)

@@ -21,6 +21,7 @@ Go (Gin) API backend for Stellabill — subscription and billing plans API. This
 
 - **Language:** Go 1.22+
 - **Framework:** [Gin](https://github.com/gin-gonic/gin)
+- **Database:** PostgreSQL with [Outbox Pattern](https://microservices.io/patterns/data/transactional-outbox.html) for reliable event publishing
 - **Config:** Environment variables (no config files required for default dev)
 
 ---
@@ -29,7 +30,8 @@ Go (Gin) API backend for Stellabill — subscription and billing plans API. This
 
 This service is the **backend only**. A separate frontend (or any client) can:
 
-- **Health check** — `GET /api/health` to verify the API is up.
+- **Health check** — `GET /api/health` to verify the API is up (includes outbox status).
+- **Outbox management** — `GET /api/outbox/stats` for outbox statistics and `POST /api/outbox/test` for test event publishing.
 - **Plans** — `GET /api/plans` to list billing plans (id, name, amount, currency, interval, description). Currently returns an empty list; DB integration is planned.
 - **Subscriptions** — `GET /api/subscriptions` to list subscriptions and `GET /api/subscriptions/:id` to fetch one. Responses include plan_id, customer, status, amount, interval, next_billing. Currently placeholder/mock data; DB integration is planned.
 
@@ -47,7 +49,7 @@ CORS is enabled for all origins in development so a frontend on another port or 
 
 - **Git** (for cloning and contributing)
 
-- **PostgreSQL** (optional for now; app runs without it using default config; DB will be used when persistence is added)
+- **PostgreSQL** (required for outbox pattern and persistence)
 
 ### 1. Clone the repository
 
@@ -72,6 +74,12 @@ ENV=development
 PORT=8080
 DATABASE_URL=postgres://localhost/stellarbill?sslmode=disable
 JWT_SECRET=change-me-in-production
+
+# Outbox configuration
+OUTBOX_PUBLISHER_TYPE=console
+OUTBOX_POLL_INTERVAL=5s
+OUTBOX_BATCH_SIZE=10
+OUTBOX_MAX_RETRIES=3
 ```
 
 Or export them in your shell. The app will run with the defaults if you don’t set anything.
@@ -88,7 +96,13 @@ Server listens on `http://localhost:8080` (or the port you set via `PORT`).
 
 ```bash
 curl http://localhost:8080/api/health
-# Expected: {"service":"stellarbill-backend","status":"ok"}
+# Expected: {"service":"stellarbill-backend","status":"ok","outbox":{"pending_events":0,"dispatcher_running":true,"database_health":"healthy"}}
+
+curl http://localhost:8080/api/outbox/stats
+# Expected: {"pending_events":0,"dispatcher_running":true,"database_health":"healthy"}
+
+curl -X POST http://localhost:8080/api/outbox/test
+# Expected: {"message":"Test event published successfully","event_type":"test.event"}
 ```
 
 ---
@@ -101,6 +115,11 @@ curl http://localhost:8080/api/health
 | `PORT`         | `8080`                                       | HTTP server port               |
 | `DATABASE_URL` | `postgres://localhost/stellarbill?sslmode=disable` | PostgreSQL connection string   |
 | `JWT_SECRET`   | `change-me-in-production`                     | Secret for JWT (change in prod)|
+| `OUTBOX_PUBLISHER_TYPE` | `console`                          | Event publisher type (console/http/multi) |
+| `OUTBOX_HTTP_ENDPOINT` | ``                                    | HTTP endpoint for event publishing |
+| `OUTBOX_POLL_INTERVAL` | `5s`                                 | Dispatcher polling interval |
+| `OUTBOX_BATCH_SIZE` | `10`                                   | Events processed per batch |
+| `OUTBOX_MAX_RETRIES` | `3`                                   | Maximum retry attempts per event |
 
 In production, set these via your host’s environment or secrets manager; do not commit secrets.
 
@@ -112,7 +131,9 @@ Base URL (local): `http://localhost:8080`
 
 | Method | Path                     | Description              |
 |--------|--------------------------|--------------------------|
-| GET    | `/api/health`            | Health check             |
+| GET    | `/api/health`            | Health check (includes outbox status) |
+| GET    | `/api/outbox/stats`      | Outbox statistics        |
+| POST   | `/api/outbox/test`       | Publish test event       |
 | GET    | `/api/plans`             | List billing plans       |
 | GET    | `/api/subscriptions`     | List subscriptions       |
 | GET    | `/api/subscriptions/:id` | Get one subscription     |
@@ -156,6 +177,18 @@ We welcome contributions from the community. Below is a short guide to get you f
    ```  
    Add or run tests if the project has them.
 
+   **Testing the outbox pattern:**
+   ```bash
+   # Run all tests with coverage
+   go test -v -cover ./internal/outbox/...
+   
+   # Run test scripts (Windows)
+   .\test-outbox.bat
+   
+   # Run test scripts (Unix/Linux)
+   ./test-outbox.sh
+   ```
+
 6. **Commit**  
    - Prefer small, atomic commits (one logical change per commit).
 
@@ -192,15 +225,34 @@ stellabill-backend/
 ├── cmd/
 │   └── server/
 │       └── main.go          # Entry point, Gin router, server start
+├── docs/
+│   ├── outbox-pattern.md    # Outbox pattern documentation
+│   └── security-notes.md    # Security considerations
 ├── internal/
 │   ├── config/
-│   │   └── config.go        # Loads ENV, PORT, DATABASE_URL, JWT_SECRET
+│   │   └── config.go        # Loads ENV, PORT, DATABASE_URL, JWT_SECRET, outbox config
 │   ├── handlers/
-│   │   ├── health.go        # GET /api/health
+│   │   ├── health.go        # GET /api/health (includes outbox status)
 │   │   ├── plans.go         # GET /api/plans
 │   │   └── subscriptions.go # GET /api/subscriptions, /api/subscriptions/:id
+│   ├── middleware/
+│   │   ├── recovery.go      # Panic recovery middleware
+│   │   └── recovery_test.go # Tests for recovery middleware
+│   ├── outbox/
+│   │   ├── types.go         # Outbox types and interfaces
+│   │   ├── repository.go    # PostgreSQL repository implementation
+│   │   ├── publisher.go     # Event publisher implementations
+│   │   ├── dispatcher.go    # Background event dispatcher
+│   │   ├── service.go       # Outbox service and domain events
+│   │   ├── manager.go       # Outbox system lifecycle management
+│   │   ├── outbox_test.go   # Comprehensive test suite
+│   │   └── integration_test.go # Integration tests
 │   └── routes/
 │       └── routes.go        # Registers routes and CORS middleware
+├── migrations/
+│   └── 001_create_outbox_table.sql # Database migration for outbox
+├── test-outbox.bat          # Windows test script
+├── test-outbox.sh           # Unix/Linux test script
 ├── go.mod
 ├── go.sum
 ├── .gitignore
