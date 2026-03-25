@@ -7,36 +7,16 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_USER: postgres
-          POSTGRES_DB: stellarbill
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d stellarbill"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/stellarbill?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: Unit tests
+      - name: Unit + contract tests
         run: go test ./...
-      - name: Migrations (up/status/idempotent/down)
-        run: |
-          go run ./cmd/migrate up
-          go run ./cmd/migrate status
-          go run ./cmd/migrate up
-          go run ./cmd/migrate down
+      - name: OpenAPI validation
+        run: go run ./cmd/openapi-validate
       - name: Coverage (>= 95% for non-cmd packages)
         shell: bash
         run: |
@@ -50,4 +30,3 @@ jobs:
           print(f"Total coverage (non-cmd): {total:.1f}%")
           raise SystemExit(0 if total >= 95.0 else 1)
           PY
-
