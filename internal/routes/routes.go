@@ -6,6 +6,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"os"
+
+	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/handlers"
+	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/service"
 )
 
 func Register(r *gin.Engine) {
@@ -14,11 +21,20 @@ func Register(r *gin.Engine) {
 
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "dev-secret"
+	}
+
+	subRepo := repository.NewMockSubscriptionRepo()
+	planRepo := repository.NewMockPlanRepo()
+	svc := service.NewSubscriptionService(subRepo, planRepo)
+
 	api := r.Group("/api")
 	{
 		api.GET("/health", handlers.Health)
 		api.GET("/subscriptions", handlers.ListSubscriptions)
-		api.GET("/subscriptions/:id", handlers.GetSubscription)
+		api.GET("/subscriptions/:id", middleware.AuthMiddleware(jwtSecret), handlers.NewGetSubscriptionHandler(svc))
 		api.GET("/plans", handlers.ListPlans)
 	}
 }
