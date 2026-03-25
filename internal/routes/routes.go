@@ -1,12 +1,18 @@
 package routes
 
 import (
-	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/handlers"
+	"stellarbill-backend/internal/metrics"
+
+	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func Register(r *gin.Engine) {
 	r.Use(corsMiddleware())
+	r.Use(metrics.MetricsMiddleware())
+
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	api := r.Group("/api")
 	{
