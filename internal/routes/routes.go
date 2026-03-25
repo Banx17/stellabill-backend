@@ -34,6 +34,7 @@ func Register(r *gin.Engine) {
 	api := r.Group("/api")
 	api.Use(idempotency.Middleware(store))
 	{
+		// Public health check - no authentication required
 		api.GET("/health", handlers.Health)
 
 		// Public read (user + admin)
