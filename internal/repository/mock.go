@@ -25,6 +25,17 @@ func (m *MockSubscriptionRepo) FindByID(_ context.Context, id string) (*Subscrip
 	return row, nil
 }
 
+func (m *MockSubscriptionRepo) FindByIDAndTenant(_ context.Context, id string, tenantID string) (*SubscriptionRow, error) {
+	row, ok := m.records[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	if row.TenantID != tenantID {
+		return nil, ErrNotFound
+	}
+	return row, nil
+}
+
 // MockPlanRepo is an in-memory PlanRepository for testing.
 type MockPlanRepo struct {
 	records map[string]*PlanRow
@@ -46,4 +57,13 @@ func (m *MockPlanRepo) FindByID(_ context.Context, id string) (*PlanRow, error) 
 		return nil, ErrNotFound
 	}
 	return row, nil
+}
+
+// List returns all PlanRows stored in the mock repository.
+func (m *MockPlanRepo) List(_ context.Context) ([]*PlanRow, error) {
+	out := make([]*PlanRow, 0, len(m.records))
+	for _, r := range m.records {
+		out = append(out, r)
+	}
+	return out, nil
 }
