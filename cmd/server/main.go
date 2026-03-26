@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"time"
@@ -34,30 +33,35 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Log warnings if any
-	if vResult := cfg.Validate(); len(vResult.Warnings) > 0 {
-		log.Printf("WARNING: Configuration warnings:")
-		for _, w := range vResult.Warnings {
-			log.Printf("  - %s", w)
-		}
+	// Init PII-safe logger
+	var logger *zap.Logger
+	if cfg.Env == "production" {
+		logger = security.ProductionLogger()
+		defer logger.Sync()
+		gin.SetMode(gin.ReleaseMode)
+		logger.Info("Running in production mode")
+	} else if cfg.Env == "development" {
+		logger = security.DevLogger()
+		defer logger.Sync()
+		gin.SetMode(gin.DebugMode)
+		logger.Info("Running in development mode")
+	} else {
+		logger = security.ProductionLogger()
+		defer logger.Sync()
+		gin.SetMode(gin.TestMode)
+		logger.Info("Running in test mode", zap.String("env", cfg.Env))
 	}
 
-	// Set Gin mode based on environment
-	if cfg.Env == "production" {
-		gin.SetMode(gin.ReleaseMode)
-		log.Println("Running in production mode")
-	} else if cfg.Env == "development" {
-		gin.SetMode(gin.DebugMode)
-		log.Println("Running in development mode")
-	} else {
-		gin.SetMode(gin.TestMode)
-		log.Printf("Running in %s mode", cfg.Env)
+	// Log config warnings
+	if vResult := cfg.Validate(); len(vResult.Warnings) > 0 {
+		logger.Warn("Configuration warnings",
+			zap.Strings("warnings", vResult.Warnings))
 	}
 
 	// Create router with configured middleware
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.Use(gin.Logger())
+	router.Use(middleware.Logger(logger))
 
 	// Security headers middleware
 	router.Use(func(c *gin.Context) {
@@ -85,13 +89,17 @@ func main() {
 		IdleTimeout:  time.Duration(cfg.IdleTimeout) * time.Second,
 	}
 
-	log.Printf("Starting Stellarbill backend on %s (env: %s)", addr, cfg.Env)
-	log.Printf("Server timeouts - Read: %ds, Write: %ds, Idle: %ds", 
-		cfg.ReadTimeout, cfg.WriteTimeout, cfg.IdleTimeout)
+	logger.Info("Starting Stellarbill backend",
+		zap.String("addr", addr),
+		zap.String("env", cfg.Env))
+	logger.Info("Server timeouts",
+		zap.Int("read", cfg.ReadTimeout),
+		zap.Int("write", cfg.WriteTimeout),
+		zap.Int("idle", cfg.IdleTimeout))
 
 	// Start server with fail-fast behavior
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Failed to start server: %v", err)
+		logger.Fatal("Failed to start server", zap.Error(err))
 	}
 
 	logger.Init()
@@ -120,3 +128,4 @@ func newRouter() *gin.Engine {
 	routes.Register(router)
 	return router
 }
+
