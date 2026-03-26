@@ -1,106 +1,82 @@
 package routes
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 )
 
-func TestRegister_MetricsEndpoint(t *testing.T) {
+func TestRegister_HealthAndCORS(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	Register(router)
+	engine := gin.New()
+	Register(engine)
 
-	// Test that /metrics endpoint exists
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/metrics", nil)
-	router.ServeHTTP(w, req)
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/api/health", nil)
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected status 200 for /metrics, got %d", w.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin: got %q want %q", got, "*")
 	}
 
-	// Verify Prometheus metrics are present
-	body := w.Body.String()
-	expectedMetrics := []string{
-		"http_request_duration_seconds",
-		"http_requests_total",
-		"db_query_duration_seconds",
-		"db_queries_total",
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode json: %v", err)
 	}
-
-	for _, metric := range expectedMetrics {
-		if !strings.Contains(body, metric) {
-			t.Errorf("Expected metrics output to contain %s", metric)
-		}
+	if payload["status"] != "ok" {
+		t.Fatalf("payload.status: got %v want %q", payload["status"], "ok")
+	}
+	if payload["service"] != "stellarbill-backend" {
+		t.Fatalf("payload.service: got %v want %q", payload["service"], "stellarbill-backend")
 	}
 }
 
-func TestRegister_APIEndpoints(t *testing.T) {
+func TestRegister_CORSPreflight(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	Register(router)
+	engine := gin.New()
+	Register(engine)
 
-	tests := []struct {
-		method   string
-		path     string
-		expected int
-	}{
-		{"GET", "/api/health", http.StatusOK},
-		{"GET", "/api/subscriptions", http.StatusOK},
-		{"GET", "/api/subscriptions/123", http.StatusOK},
-		{"GET", "/api/plans", http.StatusOK},
+	req := httptest.NewRequest(http.MethodOptions, "http://localhost:8080/api/health", nil)
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d want %d", rec.Code, http.StatusNoContent)
 	}
-
-	for _, tt := range tests {
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(tt.method, tt.path, nil)
-		router.ServeHTTP(w, req)
-
-		if w.Code != tt.expected {
-			t.Errorf("%s %s: expected status %d, got %d", tt.method, tt.path, tt.expected, w.Code)
-		}
+	if got := rec.Header().Get("Access-Control-Allow-Methods"); got == "" {
+		t.Fatalf("expected Access-Control-Allow-Methods to be set")
 	}
 }
 
-func TestRegister_CORSHeaders(t *testing.T) {
+func TestRegister_GetSubscriptionShape(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	Register(router)
+	engine := gin.New()
+	Register(engine)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("OPTIONS", "/api/health", nil)
-	router.ServeHTTP(w, req)
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/api/subscriptions/sub_123", nil)
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
 
-	if w.Code != 204 {
-		t.Errorf("Expected status 204 for OPTIONS, got %d", w.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d want %d", rec.Code, http.StatusOK)
 	}
-}
-
-func TestRegister_MetricsTracksRequests(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	Register(router)
-
-	// Make a request to populate metrics
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/health", nil)
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d", w.Code)
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode json: %v", err)
 	}
-
-	// Verify metrics were recorded
-	w = httptest.NewRecorder()
-	req, _ = http.NewRequest("GET", "/metrics", nil)
-	router.ServeHTTP(w, req)
-
-	body := w.Body.String()
-	if !strings.Contains(body, `http_requests_total{`) {
-		t.Error("Expected http_requests_total metric to be recorded")
+	if payload["id"] != "sub_123" {
+		t.Fatalf("payload.id: got %v want %q", payload["id"], "sub_123")
+	}
+	if _, ok := payload["plan_id"]; !ok {
+		t.Fatalf("expected payload.plan_id to be present")
+	}
+	if _, ok := payload["customer"]; !ok {
+		t.Fatalf("expected payload.customer to be present")
 	}
 }

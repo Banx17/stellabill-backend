@@ -7,31 +7,23 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestHealth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.GET("/health", Health)
+	h := &Handler{}
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/health", nil)
-	router.ServeHTTP(w, req)
+	c, _ := gin.CreateTestContext(w)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", w.Code)
-	}
+	h.Health(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
 
 	var response map[string]string
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatalf("Failed to parse response: %v", err)
-	}
-
-	if response["status"] != "ok" {
-		t.Errorf("Expected status 'ok', got %s", response["status"])
-	}
-
-	if response["service"] != "stellarbill-backend" {
-		t.Errorf("Expected service 'stellarbill-backend', got %s", response["service"])
-	}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.Equal(t, "ok", response["status"])
+	assert.Equal(t, "stellarbill-backend", response["service"])
 }

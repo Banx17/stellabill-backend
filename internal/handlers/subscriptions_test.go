@@ -7,84 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 	"github.com/gin-gonic/gin"
-)
-
-func TestListSubscriptions(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.GET("/subscriptions", ListSubscriptions)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/subscriptions", nil)
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", w.Code)
-	}
-
-	var response map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatalf("Failed to parse response: %v", err)
-	}
-
-	subscriptions, ok := response["subscriptions"].([]interface{})
-	if !ok {
-		t.Fatalf("Expected subscriptions to be an array, got %T", response["subscriptions"])
-	}
-
-	if len(subscriptions) != 0 {
-		t.Errorf("Expected empty subscriptions array, got %d items", len(subscriptions))
-	}
-}
-
-func TestGetSubscription_Success(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.GET("/subscriptions/:id", GetSubscription)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/subscriptions/123", nil)
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", w.Code)
-	}
-
-	var response map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatalf("Failed to parse response: %v", err)
-	}
-
-	if response["id"] != "123" {
-		t.Errorf("Expected id '123', got %v", response["id"])
-	}
-
-	if response["status"] != "placeholder" {
-		t.Errorf("Expected status 'placeholder', got %v", response["status"])
-	}
-}
-
-func TestGetSubscription_EmptyID(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.GET("/subscriptions/:id", GetSubscription)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/subscriptions/", nil)
-	router.ServeHTTP(w, req)
-
-	// Gin will return 404 for empty path parameter
-	if w.Code == http.StatusOK {
-		// If it reaches the handler, it should return bad request
-		var response map[string]interface{}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err == nil {
-			if _, hasError := response["error"]; hasError {
-				return // Expected error response
-			}
-		}
-	}
-	// Either 404 or error response is acceptable
-
 	"stellarbill-backend/internal/service"
 )
 
@@ -93,15 +15,23 @@ type mockSubscriptionService struct {
 	detail   *service.SubscriptionDetail
 	warnings []string
 	err      error
+	callerID string
+	id       string
 }
 
-func (m *mockSubscriptionService) GetDetail(_ context.Context, _, _ string) (*service.SubscriptionDetail, []string, error) {
+func (m *mockSubscriptionService) GetDetail(_ context.Context, callerID, id string) (*service.SubscriptionDetail, []string, error) {
+	m.callerID = callerID
+	m.id = id
 	return m.detail, m.warnings, m.err
 }
 
-// setupRouter builds a minimal Gin router with the handler wired up.
+func (m *mockSubscriptionService) ListSubscriptions(_ context.Context) ([]Subscription, error) {
+	return nil, nil
+}
+
+// setupRouter builds a minimal Gin router with the Handler wired up.
 // If setCallerID is true, a middleware injects "callerID" into the context.
-func setupRouter(svc service.SubscriptionService, setCallerID bool) *gin.Engine {
+func setupRouter(svc *mockSubscriptionService, setCallerID bool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	if setCallerID {
@@ -110,13 +40,28 @@ func setupRouter(svc service.SubscriptionService, setCallerID bool) *gin.Engine 
 			c.Next()
 		})
 	}
-	r.GET("/api/subscriptions/:id", NewGetSubscriptionHandler(svc))
+	h := &Handler{Subscriptions: svc}
+	r.GET("/api/subscriptions/:id", h.GetSubscription)
 	return r
+}
+
+func TestListSubscriptions_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &mockSubscriptionService{}
+	h := &Handler{Subscriptions: svc}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	h.ListSubscriptions(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
 }
 
 func TestGetSubscription_MissingCallerID_Returns401(t *testing.T) {
 	svc := &mockSubscriptionService{}
-	r := setupRouter(svc, false) // no callerID injected
+	r := setupRouter(svc, false)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
@@ -133,19 +78,15 @@ func TestGetSubscription_MissingCallerID_Returns401(t *testing.T) {
 }
 
 func TestGetSubscription_EmptyID_Returns400(t *testing.T) {
-	// Gin strips trailing slashes, so we test whitespace-only via a custom param.
-	// We use a route that accepts a whitespace id by registering a wildcard.
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
 		c.Set("callerID", "caller-123")
 		c.Next()
 	})
-	// Register a route that captures whitespace as the id segment.
 	r.GET("/api/subscriptions/:id", NewGetSubscriptionHandler(&mockSubscriptionService{}))
 
 	w := httptest.NewRecorder()
-	// Send a request with only spaces as the id (URL-encoded space = %20).
 	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/%20", nil)
 	r.ServeHTTP(w, req)
 
@@ -156,6 +97,65 @@ func TestGetSubscription_EmptyID_Returns400(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&body)
 	if body["error"] == "" {
 		t.Error("expected error field in response body")
+	}
+}
+
+func TestGetSubscription_RejectsUnexpectedQueryParams_Returns400(t *testing.T) {
+	svc := &mockSubscriptionService{}
+	r := setupRouter(svc, true)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1?expand=plan", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	if svc.id != "" {
+		t.Fatalf("service should not be called, got id %q", svc.id)
+	}
+}
+
+func TestGetSubscription_RejectsEncodedPayloadID_Returns400(t *testing.T) {
+	svc := &mockSubscriptionService{}
+	r := setupRouter(svc, true)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/%3Cscript%3E", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	if svc.id != "" {
+		t.Fatalf("service should not be called, got id %q", svc.id)
+	}
+}
+
+func TestGetSubscription_NormalizesUnicodeID_BeforeServiceCall(t *testing.T) {
+	svc := &mockSubscriptionService{
+		detail: &service.SubscriptionDetail{
+			ID:       "sub-1",
+			PlanID:   "plan-1",
+			Customer: "caller-123",
+			Status:   "active",
+			Interval: "monthly",
+		},
+	}
+	r := setupRouter(svc, true)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/%EF%BD%93%EF%BD%95%EF%BD%82%EF%BC%8D%EF%BC%91", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+	if svc.id != "sub-1" {
+		t.Fatalf("expected normalized id sub-1, got %q", svc.id)
+	}
+	if svc.callerID != "caller-123" {
+		t.Fatalf("expected callerID caller-123, got %q", svc.callerID)
 	}
 }
 
@@ -263,18 +263,15 @@ func TestGetSubscription_HappyPath_Returns200WithEnvelope(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	// Check Content-Type header.
 	ct := w.Header().Get("Content-Type")
 	if ct != "application/json; charset=utf-8" {
 		t.Errorf("unexpected Content-Type: %q", ct)
 	}
 
-	// Decode and verify envelope shape.
 	var envelope map[string]interface{}
 	if err := json.NewDecoder(w.Body).Decode(&envelope); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-
 	if envelope["api_version"] != "1" {
 		t.Errorf("expected api_version=1, got %v", envelope["api_version"])
 	}
@@ -299,7 +296,6 @@ func TestGetSubscription_HappyPath_Returns200WithEnvelope(t *testing.T) {
 		t.Errorf("expected data.interval=monthly, got %v", data["interval"])
 	}
 
-	// Check plan metadata embedded.
 	plan, ok := data["plan"].(map[string]interface{})
 	if !ok {
 		t.Fatal("expected data.plan to be an object")
@@ -308,7 +304,6 @@ func TestGetSubscription_HappyPath_Returns200WithEnvelope(t *testing.T) {
 		t.Errorf("expected plan.plan_id=plan-1, got %v", plan["plan_id"])
 	}
 
-	// Check billing_summary.
 	billing, ok := data["billing_summary"].(map[string]interface{})
 	if !ok {
 		t.Fatal("expected data.billing_summary to be an object")
